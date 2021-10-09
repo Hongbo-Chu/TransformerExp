@@ -23,6 +23,10 @@ class selfAttention(nn.Module):
         keys = values.reshape(N, key_len, self.heads, self.headDim)
         query = values.reshape(N, que_len, self.heads, self.headDim)#??????
 
+        values = self.values(values)
+        keys = self.keys(keys)
+        query = self.queries(query)
+
         energy = torch.einsum("nqhd,nkhd->nhqk",[query, keys])
         #energy shape :(N, heads, querLen, keyLen)
         #key shape(N, key_len, heads, headdim)
@@ -80,10 +84,10 @@ class encoder(nn.Module):
                 transformerBlock(
                     embed_size,
                     heads,
-                    dropout,
-                    forward_expansion
+                    dropout=dropout,
+                    forward_expansion=forward_expansion
                 )
-            ]
+            for _ in range(num_layers)]
         )
         self.dropout = nn.Dropout(dropout)
 
@@ -107,6 +111,7 @@ class decoderBlock(nn.Module):
             embed_size,heads,dropout,forwad_expansion
         )
         self.dropout = nn.Dropout(dropout)
+
     def forward(self, x, value, key, src_mask, trg_mask):
         attention = self.attention(x,x,x,trg_mask)
         query = self.dropout(self.norm(attention+x))#decoder的query来自decoder的上一层
@@ -148,3 +153,79 @@ class decoder(nn.Module):
             x = layer(x, enc_out, enc_out, src_mask, trg_mask)
 
         out = self.fc_out(x)
+        return out
+
+class transformer(nn.Module):
+    def __init__(
+            self,
+            src_voc_size,
+            trg_voc_size,
+            src_pad_size,
+            trg_pad_size,
+            embed_size=256,
+            num_layer=6,
+            forward_expansion=4,
+            heads=8,
+            dropout=0,
+            device="cuda",
+            max_length=100
+    ):
+        super(transformer, self).__init__()
+
+        self.encoder = encoder(
+            src_voc_size,
+            embed_size,
+            num_layer,
+            heads,
+            device,
+            forward_expansion,
+            dropout,
+            max_length
+        )
+
+        self.decoder = decoder(
+            trg_voc_size,
+            embed_size,
+            num_layer,
+            heads,
+            forward_expansion,
+            dropout,
+            device,
+            max_length
+        )
+        self.src_pad_idx = src_pad_size
+        self.trg_pad_idx =trg_pad_size
+        self.device = device
+
+    def make_src_mask(self, src):
+        src_mask = (src != self.src_pad_idx).unsqueeze(1).unsqueeze(2)
+        #(N, 1, 1, src_len)
+        return src_mask.to(self.device)
+
+    def make_trg_mask(self, trg):
+        N, trg_len = trg.shape
+        trg_mask = torch.tril(torch.ones(trg_len, trg_len)).expand(
+            N, 1, trg_len, trg_len
+        )
+        return trg_mask.to(self.device)
+    def forward(self, src, trg):
+        src_mask = self.make_src_mask(src)
+        trg_mask = self.make_trg_mask(trg)
+        enc_src = self.encoder(src, src_mask)
+        out = self.decoder(trg, enc_src, src_mask, trg_mask)
+        return out
+
+if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    x = torch.tensor([[1,7,4,3,5,9,2,0], [1,8,7,34,5,6,7,2]]).to(device)
+
+    trg = torch.tensor([[1,7,4,3,5,9,2,0],[1,5,6,2,4,7,6,2]]).to(device)
+
+    src_pad_idx = 0
+    trg_PAd_idx = 0
+    src_vocab_size = 10
+    trg_vocab_size = 10
+    model = transformer(src_vocab_size, trg_vocab_size, src_pad_idx, trg_PAd_idx).to(device)
+    out = model(x,trg[:,:-1])
+    print(out.shape)
