@@ -97,3 +97,54 @@ class encoder(nn.Module):
             out = layer(out, out, out, mask)
 
         return out
+
+class decoderBlock(nn.Module):
+    def __init__(self, embed_size, heads, forwad_expansion, dropout, device):
+        super(decoderBlock, self).__init__()
+        self.attention = selfAttention(embed_size, heads)
+        self.norm = nn.LayerNorm(embed_size)
+        self.transformer_block = transformerBlock(
+            embed_size,heads,dropout,forwad_expansion
+        )
+        self.dropout = nn.Dropout(dropout)
+    def forward(self, x, value, key, src_mask, trg_mask):
+        attention = self.attention(x,x,x,trg_mask)
+        query = self.dropout(self.norm(attention+x))#decoder的query来自decoder的上一层
+        out = self.transformer_block(value, key, query, src_mask)
+
+        return out
+
+
+class decoder(nn.Module):
+    def __init__(self,
+                 trg_vocab_size,
+                 embed_size,
+                 num_layer,
+                 heads,
+                 forward_expansion,
+                 dropout,
+                 device,
+                 max_length,
+    ):
+        super(decoder, self).__init__()
+        self.device = device
+        self.word_embedding = nn.Embedding(trg_vocab_size, embed_size)
+        self.psition_embedding = nn.Embedding(max_length, embed_size)
+
+        self.layers = nn.ModuleList(
+            [
+                decoderBlock(embed_size, heads,forward_expansion,dropout, device)
+                for _ in range(num_layer)
+            ]
+        )
+        self.fc_out = nn.Linear(embed_size, trg_vocab_size)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, enc_out, src_mask, trg_mask):
+        N, seq_length = x.shape
+        positions = torch.arange(0,seq_length).expand(N, seq_length).to(self.device)
+        x = self.dropout(self.word_embedding(x) + self.psition_embedding(positions))
+        for layer in self.layers:
+            x = layer(x, enc_out, enc_out, src_mask, trg_mask)
+
+        out = self.fc_out(x)
